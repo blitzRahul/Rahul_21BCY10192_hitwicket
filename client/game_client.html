@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <link rel="stylesheet" href="./styles.css">
+</head>
+
+<body class="bg-dark">
+    <div class="start-screen" id="start-scrn"><button id="btn-find" onclick="FindGameClicked()">Find Game</button>
+
+        <button id="btn-clear" onclick="ClearStorage()">new user ID</button>
+        <div id="join-status-box">By Rahul Maurya</div>
+    </div>
+    <div class="quit">
+        <button class="quit-button" onclick="quitGame()">Quit</button>
+    </div>
+    <div class="main-screen">
+    <div class="instructions-container player-color">
+        <h1>Guide</h1>
+        <div style="font-weight: 500;font-size: 1.3rem;margin-top: 30px;">one piece can be used of each type</div>
+        <div style="font-weight: 500;font-size: 1.1rem;margin-top: 30px;">
+            Pawn (P)
+            <ul style="padding-left: 20px; margin-bottom: 20px;">
+                <li>
+                    Moves 1 step in any direction
+                </li>
+            </ul>
+            Hero 1 (H1)
+            <ul style="padding-left: 20px;margin-bottom: 20px;">
+                <li>
+                    Moves 2 steps in any direction
+                </li>
+            </ul>
+            Hero 2 (H2)
+            <ul style="padding-left: 20px;margin-bottom: 20px;">
+                <li>
+                    Moves 2 steps diagonally
+                </li>
+            </ul>
+            Hero 3 (H3)
+            <ul style="padding-left: 20px;margin-bottom: 20px;">
+                <li>
+                    Moves 2 steps L,R,F,B then 1 step in the perpendicular direction
+                </li>
+            </ul>
+        </div>
+    </div>
+    <div class="game-container">
+        <h1 id="player-name">Chess Like Game</h1>
+        <div class="board-container" id="board">
+    
+        </div>
+        <div id="game-message">Welcome to the game!</div>
+        <div id="button-area">
+
+        </div>
+
+    </div>
+    <div class="chat-container"><h1>Chat</h1>
+    <div id="chat-box"></div>
+    <div style="width: 100%; display: flex; margin-top: 10px;">
+        <input style="width: 90%; border-radius: 15px;font-weight: 500;background-color: rgb(41, 41, 41);color: white;border: none; padding: 5px; padding-left: 15px;" type="text" name="" id="chat-input" placeholder="Enter your message">
+        <button id="chat-submit" onclick="ChatSubmitClicked()">send</button>
+    </div>
+    </div>
+</div>
+</body>
+
+<script>
+//when script loaded
+//get UID and SID
+var UID= localStorage.getItem("UID");
+var SID=localStorage.getItem("SID");
+var isGameEnabled=false;
+var hasAuth=false;
+
+var inputEnabled=true;
+var isShiftPressed = false;
+var isCapslockActive = false;
+
+var selectedCell=null;
+
+var playerName=document.getElementById("player-name");
+var findGameButton= document.getElementById("btn-find");
+var boardContainer=document.getElementById("board");
+var startScreen= document.getElementById("start-scrn");
+var gameMessage=document.getElementById("game-message");
+var buttonArea=document.getElementById("button-area");
+var chatBox=document.getElementById("chat-box");
+var chatInput=document.getElementById("chat-input");
+var chatButton=document.getElementById("chat-submit");
+var joinStatus= document.getElementById("join-status-box");
+
+var objectBoard=[];
+
+var playerData={
+    playerType:"",
+    playerTurn:false
+};
+//this is for input
+document.addEventListener('keydown', (event) => {
+    if(inputEnabled){
+    if (event.key === 'Shift') {
+        //setting state of shift
+        isShiftPressed = true;
+    }
+    if (event.getModifierState('CapsLock')) {
+        isCapslockActive =true;
+    }else{
+        isCapslockActive=false;
+    }
+
+    if (selectedCell) {
+        if (event.key === 'Backspace') {
+            selectedCell.innerText = selectedCell.innerText.slice(0, -1);
+        } else if (event.key.length === 1) {
+            // if key is a single character
+            let char = event.key;
+
+            // capitalization handling
+            if (isShiftPressed || isCapslockActive) {
+                char = char.toUpperCase();
+            } else {
+                char = char.toLowerCase();
+            }
+
+            // Append the character to the selected cell's content
+            selectedCell.innerText += char;
+        }
+    }
+}
+});
+
+//event listener for keyup. this will reset shift state
+document.addEventListener('keyup', (event) => {
+    if(inputEnabled){
+    if (event.key === 'Shift') {
+        isShiftPressed = false;
+    }
+}
+});
+
+function FindGameClicked(){ 
+    if(hasAuth){
+        //if it has auth, the client can send a new game request
+        joinStatus.innerText="Finding players..."
+        ws.send(`GAME:${UID}:NEW_GAME`);
+        ws.send(`GAME:${UID}:NEW_GAME`);
+
+    }else{
+        findGameButton.innerText="Try Again";
+    }
+}
+
+function quitGame(){
+ 
+        localStorage.setItem("SID",null);
+        SID=null;
+        ws.send(`GAME:${UID}:QUIT_GAME:`);
+    
+
+}
+
+function ChatSubmitClicked(){
+    let chatMessage=chatInput.value;
+    if(chatMessage.length!=0){
+        ws.send(`GAME:${UID}:GAME_CHAT:${chatMessage}`);
+        chatInput.value="";
+    }
+}
+var lastHome=null;
+function HandlePieceHomeClick(event){
+    if(lastHome!==null && event.target!=lastHome){
+        lastHome.classList.remove("home-box-glow");
+        event.target.classList.add("home-box-glow");
+    }
+    lastHome=event.target;
+    event.target.classList.add("home-box-glow");
+    selectedCell=event.target;
+}
+
+var selectionState={
+    intentToMove:false,
+    pieceToBeMoved:null,
+    possibleMoveCells:[],
+};
+//remove all highlights and attributes set by setSelectState
+function resetSelectionState(){
+    selectionState.intentToMove=false;
+    if(selectionState.pieceToBeMoved){
+        selectionState.pieceToBeMoved.classList.remove("player-piece-highlight");
+    }
+    selectionState.pieceToBeMoved=null;
+    if(selectionState.possibleMoveCells){
+        for(let i=0;i<selectionState.possibleMoveCells.length;i++){
+            let moveCell=selectionState.possibleMoveCells[i];
+            moveCell.removeAttribute("move-cell");
+            moveCell.classList.remove("move-cell-highlight");
+        }
+        selectionState.possibleMoveCells=[];
+    }
+}
+function setSelectionState(pieceToBeMoved,moveCells){
+    selectionState.intentToMove=true;
+    selectionState.pieceToBeMoved=pieceToBeMoved;
+    selectionState.pieceToBeMoved.classList.add("player-piece-highlight");
+    for(let i=0;i<moveCells.length;i++){
+        //move cell element
+        let mce=moveCells[i];
+        mce.div.setAttribute("move-cell",mce.moveString);
+        mce.div.classList.add("move-cell-highlight");
+        selectionState.possibleMoveCells.push(mce.div);
+    }
+
+}
+function HandleCellClick(event){
+    if(isGameEnabled&&playerData.playerTurn){
+        //you should be able to select stuff
+        if(selectionState.intentToMove&&event.target.hasAttribute("move-cell")){
+            console.log("send message to the server");
+            const moveMessage={
+                piece:selectionState.pieceToBeMoved.innerText,
+                move:event.target.getAttribute("move-cell").toString()
+            };
+            ws.send(`GAME:${UID}:GAME_PROGRESS_MOVE:${JSON.stringify(moveMessage)}`);
+            resetSelectionState();
+            return;
+        }
+        if(selectionState.intentToMove &&(!event.target.hasAttribute("move-cell"))){
+            resetSelectionState();
+        }
+        let cellValue=event.target.innerText;
+        let isCellPiece=checkIsCellPlayerPiece(cellValue);
+        if(isCellPiece){
+            //then the user intends to move this player
+            //then lets calculate the moves of this piece
+            MarkPlayerMoves(event.target);
+        }
+        
+    }
+console.log(event.target.id);
+}
+
+//mark all of the moves this piece can take
+function MarkPlayerMoves(playerDiv){
+    let piece=playerDiv.innerText.split("-");
+    let piece_i=playerDiv.id[0]*1;
+    let piece_j=playerDiv.id[1]*1;
+    let moveCells=[];
+    let temp=false;
+    let transient=false;
+    switch(piece[1]){
+        case "P1":
+        case "P2":
+        case "P3":
+        //logic to handle pawns
+        //possible moves L,R,F,B
+        //doing left first
+            temp=isMoveValid(piece_i,piece_j,1,0,0,0);
+            if(temp){moveCells.push({div:temp,moveString:"L"})};
+            temp=isMoveValid(piece_i,piece_j,0,1,0,0);
+            if(temp){moveCells.push({div:temp,moveString:"R"})};
+            temp=isMoveValid(piece_i,piece_j,0,0,1,0);
+            if(temp){moveCells.push({div:temp,moveString:"F"})};
+            temp=isMoveValid(piece_i,piece_j,0,0,0,1);
+            if(temp){moveCells.push({div:temp,moveString:"B"})};
+
+        break;
+        case "H1":
+        //handle hero 1
+            temp=isMoveValid(piece_i,piece_j,2,0,0,0);
+            if(temp){moveCells.push({div:temp,moveString:"L"})};
+            temp=isMoveValid(piece_i,piece_j,0,2,0,0);
+            if(temp){moveCells.push({div:temp,moveString:"R"})};
+            temp=isMoveValid(piece_i,piece_j,0,0,2,0);
+            if(temp){moveCells.push({div:temp,moveString:"F"})};
+            temp=isMoveValid(piece_i,piece_j,0,0,0,2);
+            if(temp){moveCells.push({div:temp,moveString:"B"})};
+        break;
+        case "H2":
+            //handle hero 2
+            temp=isMoveValid(piece_i,piece_j,2,0,2,0);
+            if(temp){moveCells.push({div:temp,moveString:"LF"})};
+            temp=isMoveValid(piece_i,piece_j,0,2,2,0);
+            if(temp){moveCells.push({div:temp,moveString:"RF"})};
+            temp=isMoveValid(piece_i,piece_j,0,2,0,2);
+            if(temp){moveCells.push({div:temp,moveString:"RB"})};
+            temp=isMoveValid(piece_i,piece_j,2,0,0,2);
+            if(temp){moveCells.push({div:temp,moveString:"LB"})};
+        break;
+        case "H3":
+            //LLF
+            temp=(isMoveValid(piece_i,piece_j,2,0,0,0)?isMoveValid(piece_i,piece_j-2,0,0,1,0):false);
+            if(temp){moveCells.push({div:temp,moveString:"LLF"})};
+            //LLB
+            temp=(isMoveValid(piece_i,piece_j,2,0,0,0)?isMoveValid(piece_i,piece_j-2,0,0,0,1):false);
+            if(temp){moveCells.push({div:temp,moveString:"LLB"})};
+            //RRF
+            temp=(isMoveValid(piece_i,piece_j,0,2,0,0)?isMoveValid(piece_i,piece_j+2,0,0,1,0):false);
+            if(temp){moveCells.push({div:temp,moveString:"RRF"})};
+            //RRB
+            temp=(isMoveValid(piece_i,piece_j,0,2,0,0)?isMoveValid(piece_i,piece_j+2,0,0,0,1):false);
+            if(temp){moveCells.push({div:temp,moveString:"RRB"})};
+            //FFL
+            temp=(isMoveValid(piece_i,piece_j,0,0,2,0)?isMoveValid(piece_i-2,piece_j,1,0,0,0):false);
+            if(temp){moveCells.push({div:temp,moveString:"FFL"})};
+            //FFR
+            temp=(isMoveValid(piece_i,piece_j,0,0,2,0)?isMoveValid(piece_i-2,piece_j,0,1,0,0):false);
+            if(temp){moveCells.push({div:temp,moveString:"FFR"})};
+            //BBL
+            temp=(isMoveValid(piece_i,piece_j,0,0,0,2)?isMoveValid(piece_i+2,piece_j,1,0,0,0):false);
+            if(temp){moveCells.push({div:temp,moveString:"BBL"})};
+            //BBR
+            temp=(isMoveValid(piece_i,piece_j,0,0,0,2)?isMoveValid(piece_i+2,piece_j,0,1,0,0):false);
+            if(temp){moveCells.push({div:temp,moveString:"BBR"})};
+        break;
+    }
+
+    console.log(moveCells);
+
+    setSelectionState(playerDiv,moveCells);
+}
+
+//a move is valid if it does not go out of bounds,or cross a friendly
+//L,R,F,B are to be used with great caution, nLF, nLB, nRF, nRB, F, nL, nR, nB
+//this covers moves of all pieces, pawns and two heroes
+//if the destination is valid then the corresponding cell is returned
+function isMoveValid(origin_i,origin_j,L,R,F,B){
+    let i=origin_i;
+    let j=origin_j;
+    while(L!=0||R!=0||F!=0||B!=0){
+        if(L!==0){j-=1;L-=1;}
+        if(R!==0){j+=1;R-=1;}
+        if(F!==0){i-=1;F-=1;}
+        if(B!==0){i+=1;B-=1;}
+
+        if((i>=0&&i<5)&&(j>=0&&j<5)){
+            //check if there is a friendly here
+            if(checkIsCellPlayerPiece(objectBoard[i][j].innerText)){
+                return false;
+            }
+        }else{
+            return false;
+        }
+    }
+    return objectBoard[i][j];
+}
+
+//is the cell picked the player
+function checkIsCellPlayerPiece(cellValue){
+    const cellContent= cellValue.split("-");
+    if(cellContent.length!=2){
+        return false;
+    }else{
+        if(cellContent[0]!=playerData.playerType){
+            return false;
+        }else{
+            return true;
+        }
+    }
+}
+
+//inital setup for the board
+function SetupBoard(){
+
+boardContainer.innerHTML="";
+for(let i=0;i<5;i++){
+    let objs=[];
+    for(let j=0;j<5;j++){
+        if(i==0){
+            let div= document.createElement('div');
+            if(playerData.playerType=="A"){
+                div.classList.add("playerB-cell");
+            }else{
+                div.classList.add("playerA-cell");
+            }
+   
+            div.id=i.toString()+j.toString();
+
+            boardContainer.appendChild(div);
+            div.addEventListener('click',HandleCellClick);
+            objs.push(div);
+        }
+        else if(i<4&&i>0){
+            let div= document.createElement('div');
+            div.classList.add("cell");
+            div.id=i.toString()+j.toString();
+            boardContainer.appendChild(div);
+            div.addEventListener('click',HandleCellClick);
+            objs.push(div);
+        }else{
+            //for the bottom most part we initially add different event listeners (to take text input)
+
+            let div= document.createElement('div');
+            if(playerData.playerType=="A"){
+                div.classList.add("playerA-cell");
+            }else{
+                div.classList.add("playerB-cell");
+            }
+ 
+            div.id=i.toString()+j.toString();
+
+            boardContainer.appendChild(div);
+            div.addEventListener('click',HandlePieceHomeClick);
+            objs.push(div);
+        }
+
+    }
+    objectBoard.push(objs);
+}
+
+}
+
+//triggered when you are happy with your piece placement
+function ConfirmSetup(event){
+    lastHome.classList.remove("home-box-glow");
+    lastHome=null;
+    const divs=objectBoard[4];
+    const retArray=[];
+    for(let i=0;i<divs.length;i++){
+        retArray.push(divs[i].innerText);
+    }
+    const retObj={
+        pieceSetup:retArray
+    };
+    const retString=JSON.stringify(retObj);
+    ws.send(`GAME:${UID}:GAME_SETUP_RESPONSE:${retString}`);
+
+
+    //GAME:UID:GAME_SETUP_RESPONSE:
+    //buttonArea.removeChild(event.target);
+}
+
+function ClearStorage(){
+    localStorage.setItem("UID",null);
+    localStorage.setItem("SID",null);
+    location.reload();
+}
+
+
+//checks if local board reflects server board, if not corrects the respective cell
+//if the board itself is empty, it is 
+function validateBoard(gameProgress,isPlayerA){
+    let serverArr= isPlayerA?gameProgress.boardA:gameProgress.boardB;
+
+    //if the board is new. Ie. this player reconnected
+    if (objectBoard.length==0){
+        startScreen.style.display='none';
+        if(isPlayerA){
+        playerName.classList.add("playerA-color");
+        playerName.innerText="You are Player A";
+        }else{
+        playerName.classList.add("playerB-color");
+        playerName.innerText="You are Player B";
+        }
+
+        boardContainer.innerHTML="";
+        for(let i=0;i<5;i++){
+            let objs=[];
+            for(let j=0;j<5;j++){
+                let tempDiv= document.createElement("div");
+                tempDiv.innerText=serverArr[i][j];
+                tempDiv.id=i.toString()+j.toString();
+               
+                if(i==0){
+                    if(isPlayerA){
+                        tempDiv.classList.add("playerB-cell");
+                    }else{
+                        tempDiv.classList.add("playerA-cell");
+                    }
+                }
+                else if(i>0&&i<4){
+                    tempDiv.classList.add("cell");
+                }
+                else{
+                    if(isPlayerA){
+                        tempDiv.classList.add("playerA-cell");
+                    }else{
+                        tempDiv.classList.add("playerB-cell");
+                    } 
+                }
+               boardContainer.appendChild(tempDiv);
+               tempDiv.addEventListener('click',HandleCellClick);
+               objs.push(tempDiv);
+            }
+            objectBoard.push(objs);
+        }
+    }else{
+        //we validate the board, if something is wrong we correct it
+        for(let i=0;i<5;i++){
+            for(let j=0;j<5;j++){
+                if(objectBoard[i][j].innerText!=serverArr[i][j]){
+                    objectBoard[i][j].innerText=serverArr[i][j];
+                }
+            }
+        }
+    }
+}
+var ctr=0;
+const ws = new WebSocket('ws://localhost:8080');
+
+// Event handler for when the WebSocket connection is established
+ws.onopen = function() {
+    console.log('Connected to WebSocket server');
+
+  
+};
+
+// Event handler for when a message is received from the server
+ws.onmessage = function(event) {
+    var data= event.data.toString();
+    var command= data.split(":");
+    let jsonString="";
+    let jsonObject=null;
+    let pieceArray=[];
+
+    switch(command[0]){
+        case "SERVER_SEND_UID":
+            UID=(UID===null)?"NA":UID;
+            console.log("Sending AUTH:"+(UID));
+            ws.send(`AUTH:${UID}`);
+        break;
+        case "SERVER_AUTH":
+
+            if(command[1]=="PASSED"){
+                console.log("Server AUTH passed");
+                hasAuth=true;
+                //AFTER PASSING AUTH
+                //CLIENT needs to check if it has a Session Id
+                //if so this could mean they disconnected from a session last time; now they want to rejoin
+                if(typeof SID=="string" && SID!="null"){
+                    //send a NEW_GAME, the server will automatically send a resume command
+                    console.log(SID);
+                    console.log("WWAAA WAAAA WAAOO WAAOOO");
+                    ws.send(`GAME:${UID}:NEW_GAME`);
+                }
+            }else{
+                console.log("server AUTH failed, sending new UID request");
+                ws.send("NEW_PLAYER:");
+            }
+        break;
+        case "SERVER_NEW_PLAYER_UID":
+            console.log("Sending ACK for "+command[0]);
+            ws.send(`ACK:${command[1]}:${command[0]}`);
+            UID=command[1];
+            ws.send(`AUTH:${UID}`);
+            console.log("Got new UID: "+UID); 
+            localStorage.setItem("UID",UID);
+        break;
+        case "SERVER_PING":
+            ws.send("PONG:");
+        break;
+        case "GAME_INIT":
+         jsonString= command.slice(1).join(":"); 
+         jsonObject= JSON.parse(jsonString);
+        console.log(jsonObject);
+        playerData.playerType=jsonObject.playerType;
+        if(playerData.playerType=="A"){
+            playerName.classList.add("playerA-color");
+            playerName.innerText="You are Player A";
+        }else{
+            playerName.classList.add("playerB-color");
+            playerName.innerText="You are Player B";
+        }
+        SID=jsonObject.SID;
+        localStorage.setItem("SID",SID);
+        startScreen.style.display='none';
+        gameMessage.innerText="Select One of the Home Boxes and Start Typing! Capslock and Shift work.";
+        SetupBoard();
+        //we can add the confirm button
+        var btn =document.createElement("button");
+        btn.innerText="Confirm Setup";
+        btn.classList.add("area-button");
+        btn.onclick=ConfirmSetup;
+        buttonArea.appendChild(btn);
+
+        //this function is going to 
+        break;
+        case "SERVER_GAME_SET":
+            gameMessage.innerText="your pieces have been set, you cannot change them now. Waiting for other player to complete setup.";
+            jsonString= command.slice(1).join(":"); 
+            jsonObject= JSON.parse(jsonString);
+            pieceArray=jsonObject.pieceSetup;
+            for(let i=0;i<5;i++){
+                objectBoard[4][i].removeEventListener('click',HandlePieceHomeClick);
+                objectBoard[4][i].innerText=pieceArray[i];
+                objectBoard[4][i].addEventListener('click',HandleCellClick);
+            }
+            inputEnabled=false;
+            buttonArea.innerHTML="";
+        break;
+        case "SERVER_GAME_ALREADY_SET":
+            gameMessage.innerText="Illegal attempt to change the config.";
+            jsonString= command.slice(1).join(":"); 
+            jsonObject= JSON.parse(jsonString);
+            pieceArray=jsonObject.pieceSetup;
+            for(let i=0;i<5;i++){
+                objectBoard[4][i].removeEventListener('click',HandlePieceHomeClick);
+                objectBoard[4][i].innerText=pieceArray[i];
+                objectBoard[4][i].addEventListener('click',HandleCellClick);
+            }
+            inputEnabled=false;
+            buttonArea.innerHTML="";
+        break;
+               
+        case "SERVER_GAME_INIT_INVALID":
+            gameMessage.innerText="Invalid Configuration. Retry.";
+        break;
+        
+        case "SERVER_GAME_PROGRESS":
+            isGameEnabled=true;
+            jsonString= command.slice(1).join(":"); 
+            jsonObject= JSON.parse(jsonString);
+        /* this.gameProgress=
+            boardA:[],
+            boardB:[],
+            turnA:false,
+            turnB:false,
+            AUID:this.A_UID,
+            BUID:this.B_UID,
+            message:""           
+        */ 
+            //since this is also sent when the player reconnects
+            //we need to check if object.board is non zero, if not init it  
+            let isPlayerA= (UID==jsonObject.AUID?true:false);  
+            playerData.playerType=isPlayerA?"A":"B";
+            validateBoard(jsonObject,isPlayerA);
+            if(!jsonObject.gameFinished){
+            if(isPlayerA){
+                playerData.playerTurn=jsonObject.turnA;
+                if(jsonObject.turnA){
+                    gameMessage.innerText="It is your turn. "+jsonObject.message;
+                }else{
+                    gameMessage.innerText="It is B's turn. "+jsonObject.message;
+                }
+            }else{
+                playerData.playerTurn=jsonObject.turnB;
+                if(jsonObject.turnB){
+                    gameMessage.innerText="It is your turn. "+jsonObject.message;
+                }else{
+                    gameMessage.innerText="It is A's turn. "+jsonObject.message;
+                } 
+            }
+        }else{
+            if(playerData.playerType==jsonObject.winner){
+                gameMessage.innerText("YOU WON!");
+            }else{
+                gameMessage.innerText("YOU LOST!");
+
+            }
+        }
+
+        break;
+
+        case "SERVER_GAME_INVALID_MOVE":
+            gameMessage.innerText="Invalid Move. Try Again.";
+        break;
+        case "SERVER_GAME_WAIT_FOR_TURN":
+            gameMessage.innerText="Wait for your turn!";
+        break;
+    
+        case "SERVER_CHAT":
+        jsonString= command.slice(1).join(":"); 
+        jsonObject= JSON.parse(jsonString);
+        /*
+            playerType:playerType,
+            message:message
+        */
+        if(jsonObject.playerType=="A"){
+            let chatDiv=document.createElement("div");
+            chatDiv.innerText=jsonObject.message;
+            chatDiv.classList.add("playerA-color");
+            chatBox.appendChild(chatDiv);
+        }else{
+            let chatDiv=document.createElement("div");
+            chatDiv.innerText=jsonObject.message;
+            chatDiv.classList.add("playerB-color");
+            chatBox.appendChild(chatDiv);
+        }
+        break;
+    
+        case "SERVER_GAME_GOODBYE":
+            SID=null;
+            localStorage.setItem("SID",null);
+            location.reload(); 
+        break;
+    }
+};
+
+// Event handler for when the WebSocket connection is closed
+ws.onclose = function() {
+    console.log('Disconnected from WebSocket server');
+};
+
+// Event handler for WebSocket errors
+ws.onerror = function(error) {
+    console.error('WebSocket Error:', error);
+};
+
+
+function NEW_PLAYER(){
+ws.send("NEW_PLAYER:TEST");
+ctr+=1;
+}
+function ACK(){
+ws.send("ACK:NEW_PLAYER_UID");
+}
+
+
+</script>
+</html>
